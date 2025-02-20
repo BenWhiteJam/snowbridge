@@ -1,3 +1,5 @@
 /bridgerelayer
 /.envrc
 build/
+.vscode/
+.env

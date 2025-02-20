@@ -2,16 +2,18 @@ package parachain
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
+	"reflect"
 	"strings"
 	"syscall"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/sirupsen/logrus"
-	"github.com/snowfork/snowbridge/relayer/crypto/secp256k1"
+	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
 	"github.com/snowfork/snowbridge/relayer/relays/parachain"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -22,6 +24,7 @@ var (
 	configFile     string
 	privateKey     string
 	privateKeyFile string
+	privateKeyID   string
 )
 
 func Command() *cobra.Command {
@@ -37,6 +40,7 @@ func Command() *cobra.Command {
 
 	cmd.Flags().StringVar(&privateKey, "ethereum.private-key", "", "Ethereum private key")
 	cmd.Flags().StringVar(&privateKeyFile, "ethereum.private-key-file", "", "The file from which to read the private key")
+	cmd.Flags().StringVar(&privateKeyID, "ethereum.private-key-id", "", "The secret id to lookup the private key in AWS Secrets Manager")
 
 	return cmd
 }
@@ -51,12 +55,17 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 
 	var config parachain.Config
-	err := viper.Unmarshal(&config)
+	err := viper.UnmarshalExact(&config, viper.DecodeHook(HexHookFunc()))
 	if err != nil {
 		return err
 	}
 
-	keypair, err := resolvePrivateKey(privateKey, privateKeyFile)
+	err = config.Validate()
+	if err != nil {
+		return fmt.Errorf("config file validation failed: %w", err)
+	}
+
+	keypair, err := ethereum.ResolvePrivateKey(privateKey, privateKeyFile, privateKeyID)
 	if err != nil {
 		return err
 	}
@@ -101,26 +110,48 @@ func run(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-func resolvePrivateKey(privateKey, privateKeyFile string) (*secp256k1.Keypair, error) {
-	var cleanedKey string
-
-	if privateKey == "" {
-		if privateKeyFile == "" {
-			return nil, fmt.Errorf("private key not supplied")
+func HexHookFunc() mapstructure.DecodeHookFuncType {
+	return func(
+		f reflect.Type,
+		t reflect.Type,
+		data interface{},
+	) (interface{}, error) {
+		// Check that the data is string
+		if f.Kind() != reflect.String {
+			return data, nil
 		}
-		contentBytes, err := ioutil.ReadFile(privateKeyFile)
+
+		// Check that the target type is our custom type
+		if t != reflect.TypeOf(parachain.ChannelID{}) {
+			return data, nil
+		}
+
+		foo, err := HexDecodeString(data.(string))
 		if err != nil {
-			return nil, fmt.Errorf("failed to load private key: %w", err)
+			return nil, err
 		}
-		cleanedKey = strings.TrimPrefix(strings.TrimSpace(string(contentBytes)), "0x")
-	} else {
-		cleanedKey = strings.TrimPrefix(privateKey, "0x")
+
+		var out [32]byte
+		copy(out[:], foo)
+
+		// Return the parsed value
+		return parachain.ChannelID(out), nil
+	}
+}
+
+// HexDecodeString decodes bytes from a hex string. Contrary to hex.DecodeString, this function does not error if "0x"
+// is prefixed, and adds an extra 0 if the hex string has an odd length.
+func HexDecodeString(s string) ([]byte, error) {
+	s = strings.TrimPrefix(s, "0x")
+
+	if len(s)%2 != 0 {
+		s = "0" + s
 	}
 
-	keypair, err := secp256k1.NewKeypairFromString(cleanedKey)
+	b, err := hex.DecodeString(s)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse private key: %w", err)
+		return nil, err
 	}
 
-	return keypair, nil
+	return b, nil
 }
