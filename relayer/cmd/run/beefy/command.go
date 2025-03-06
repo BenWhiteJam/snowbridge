@@ -3,15 +3,13 @@ package beefy
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/sirupsen/logrus"
-	"github.com/snowfork/snowbridge/relayer/crypto/secp256k1"
+	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
 	"github.com/snowfork/snowbridge/relayer/relays/beefy"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -22,6 +20,8 @@ var (
 	configFile     string
 	privateKey     string
 	privateKeyFile string
+	privateKeyID   string
+	onDemand       bool
 )
 
 func Command() *cobra.Command {
@@ -37,6 +37,9 @@ func Command() *cobra.Command {
 
 	cmd.Flags().StringVar(&privateKey, "ethereum.private-key", "", "Ethereum private key")
 	cmd.Flags().StringVar(&privateKeyFile, "ethereum.private-key-file", "", "The file from which to read the private key")
+	cmd.Flags().StringVar(&privateKeyID, "ethereum.private-key-id", "", "The secret id to lookup the private key in AWS Secrets Manager")
+
+	cmd.Flags().BoolVarP(&onDemand, "on-demand", "", false, "Synchronize commitments on demand")
 
 	return cmd
 }
@@ -51,17 +54,17 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 
 	var config beefy.Config
-	err := viper.Unmarshal(&config)
+	err := viper.UnmarshalExact(&config)
 	if err != nil {
 		return err
 	}
 
-	keypair, err := resolvePrivateKey(privateKey, privateKeyFile)
+	err = config.Validate()
 	if err != nil {
-		return err
+		return fmt.Errorf("config file validation failed: %w", err)
 	}
 
-	relay, err := beefy.NewRelay(&config, keypair)
+	keypair, err := ethereum.ResolvePrivateKey(privateKey, privateKeyFile, privateKeyID)
 	if err != nil {
 		return err
 	}
@@ -85,11 +88,30 @@ func run(_ *cobra.Command, _ []string) error {
 		return nil
 	})
 
-	err = relay.Start(ctx, eg)
-	if err != nil {
-		logrus.WithError(err).Fatal("Unhandled error")
-		cancel()
-		return err
+	if !onDemand {
+		relay, err := beefy.NewRelay(&config, keypair)
+		if err != nil {
+			return err
+		}
+
+		err = relay.Start(ctx, eg)
+		if err != nil {
+			logrus.WithError(err).Fatal("Unhandled error")
+			cancel()
+			return err
+		}
+	} else {
+		relay, err := beefy.NewOnDemandRelay(&config, keypair)
+		if err != nil {
+			return err
+		}
+
+		err = relay.Start(ctx)
+		if err != nil {
+			logrus.WithError(err).Fatal("Unhandled error")
+			cancel()
+			return err
+		}
 	}
 
 	err = eg.Wait()
@@ -99,28 +121,4 @@ func run(_ *cobra.Command, _ []string) error {
 	}
 
 	return nil
-}
-
-func resolvePrivateKey(privateKey, privateKeyFile string) (*secp256k1.Keypair, error) {
-	var cleanedKey string
-
-	if privateKey == "" {
-		if privateKeyFile == "" {
-			return nil, fmt.Errorf("private key not supplied")
-		}
-		contentBytes, err := ioutil.ReadFile(privateKeyFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load private key: %w", err)
-		}
-		cleanedKey = strings.TrimPrefix(strings.TrimSpace(string(contentBytes)), "0x")
-	} else {
-		cleanedKey = strings.TrimPrefix(privateKey, "0x")
-	}
-
-	keypair, err := secp256k1.NewKeypairFromString(cleanedKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse private key: %w", err)
-	}
-
-	return keypair, nil
 }

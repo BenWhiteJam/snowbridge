@@ -1,40 +1,133 @@
 # Snowbridge
+[![codecov](https://codecov.io/gh/Snowfork/snowbridge/branch/main/graph/badge.svg?token=9hvgSws4rN)](https://codecov.io/gh/Snowfork/snowbridge)
+![GitHub](https://img.shields.io/github/license/Snowfork/snowbridge)
 
-A trustless bridge between Polkadot and Ethereum.
-
-## Development
-
-To locally bootstrap our system for testing and development, or just to play around, please refer to our [tests](test/README.md) component.
+Snowbridge is a trustless bridge between Polkadot and Ethereum. For documentation, visit https://docs.snowbridge.network.
 
 ## Components
 
-### Ethereum
+The Snowbridge project lives in two repositories:
 
-This component includes our Ethereum contracts, tests and truffle config.
-
-See [ethereum/README.md](ethereum/README.md)
+- [Snowfork/polkadot-sdk](https://github.com/Snowfork/polkadot-sdk): The Snowbridge parachain and pallets live in
+  a fork of the polkadot-sdk. Changes are eventually contributed back to
+  [paritytech/polkadot-sdk](https://github.com/paritytech/polkadot-sdk)
+- [Snowfork/snowbridge](https://github.com/Snowfork/snowbridge): The rest of the Snowbridge components, like contracts,
+  off-chain relayer, end-to-end tests and test-net setup code.
 
 ### Parachain
 
-This component includes our substrate parachain, as well as our bridge-specific pallets.
+Polkadot parachain and our pallets. See [https://github.com/Snowfork/polkadot-sdk](https://github.com/Snowfork/polkadot-sdk/blob/snowbridge/bridges/snowbridge/README.md).
 
-See [parachain/README.md](parachain/README.md)
+### Contracts
+
+Ethereum contracts and unit tests. See [contracts/README.md](https://github.com/Snowfork/snowbridge/blob/main/contracts/README.md)
 
 ### Relayer
 
-This component includes our Relayer daemon that will be run by relayers to watch and relay 2-way messages.
+Off-chain relayer services for relaying messages between Polkadot and Ethereum. See
+[relayer/README.md](https://github.com/Snowfork/snowbridge/blob/main/relayer/README.md)
 
-See [relayer/README.md](relayer/README.md)
+### Local Testnet
 
-### Tests
+Scripts to provision a local testnet, running the above services to bridge between local deployments of Polkadot and
+Ethereum. See [web/packages/test/README.md](https://github.com/Snowfork/snowbridge/blob/main/web/packages/test/README.md).
 
-This component includes our end to end tests, that pull together all the above services and set them up easily through scripts for automated E2E tests.
+### Smoke Tests
 
-See [test/README.md](test/README.md)
+Integration tests for our local testnet. See [smoketest/README.md](https://github.com/Snowfork/snowbridge/blob/main/smoketest/README.md).
 
-## Usage
+## Development
 
-To test out and use the bridge, please refer to the [Tests](#Tests) section above.
+We use the Nix package manager to provide a reproducible and maintainable developer environment.
+
+After [installing Nix](https://nixos.org/download.html), enable [flakes](https://wiki.nixos.org/wiki/Flakes):
+
+```sh
+mkdir -p ~/.config/nix
+echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+```
+
+Then activate a developer shell in the root of our repo, where
+[`flake.nix`](https://github.com/Snowfork/snowbridge/blob/main/flake.nix) is located:
+
+```sh
+nix develop
+```
+
+Also make sure to run this initialization script once:
+```sh
+scripts/init.sh
+```
+
+### Support for code editors
+
+To ensure your code editor (such as VS Code) can execute tools in the nix shell, startup your editor within the
+interactive shell.
+
+Example for VS Code:
+
+```sh
+nix develop
+code .
+```
+
+### Custom shells
+
+The developer shell is bash by default. To preserve your existing shell:
+
+```sh
+nix develop --command $SHELL
+```
+
+### Automatic developer shells
+
+To automatically enter the developer shell whenever you open the project, install
+[`direnv`](https://direnv.net/docs/installation.html) and use the template `.envrc`:
+
+```sh
+cp .envrc.example .envrc
+direnv allow
+```
+
+### Upgrading the Rust toolchain
+
+Sometimes we would like to upgrade rust toolchain. First update `polkadot-sdk/rust-toolchain.toml` as required and then
+update `flake.lock` running
+```sh
+nix flake lock --update-input rust-overlay
+```
+
+## Troubleshooting
+
+Check the contents of all `.envrc` files.
+
+Remove untracked files:
+```sh
+git clean -idx
+```
+
+Ensure that the current Rust toolchain is the one selected in `scripts/init.sh`.
+
+Ensure submodules are up-to-date:
+```sh
+git submodule update
+```
+
+Check untracked files & directories:
+```sh
+git clean -ndx | awk '{print $3}'
+```
+After removing `node_modules` directories (eg. with `git clean above`), clear the pnpm cache:
+```sh
+pnpm store prune
+```
+
+Check Nix config in `~/.config/nix/nix.conf`.
+
+Run a pure developer shell (note that this removes access to your local tools):
+```sh
+nix develop -i --pure-eval
+```
 
 ## Security
 

@@ -2,102 +2,80 @@ package beefy
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/snowfork/snowbridge/relayer/chain"
 	"github.com/snowfork/snowbridge/relayer/chain/ethereum"
 	"github.com/snowfork/snowbridge/relayer/chain/relaychain"
 	"github.com/snowfork/snowbridge/relayer/crypto/secp256k1"
-	"github.com/snowfork/snowbridge/relayer/relays/beefy/store"
 
 	log "github.com/sirupsen/logrus"
 )
 
 type Relay struct {
-	config                  *Config
-	relaychainConn          *relaychain.Connection
-	ethereumConn            *ethereum.Connection
-	beefyEthereumListener   *BeefyEthereumListener
-	beefyRelaychainListener *BeefyRelaychainListener
-	beefyEthereumWriter     *BeefyEthereumWriter
-	beefyDB                 *store.Database
-	beefyMessages           chan store.BeefyRelayInfo
-	ethHeaders              chan chain.Header
+	config           *Config
+	relaychainConn   *relaychain.Connection
+	ethereumConn     *ethereum.Connection
+	polkadotListener *PolkadotListener
+	ethereumWriter   *EthereumWriter
 }
 
 func NewRelay(config *Config, ethereumKeypair *secp256k1.Keypair) (*Relay, error) {
-	log.Info("Relay created")
-
-	dbMessages := make(chan store.DatabaseCmd)
-	beefyDB := store.NewDatabase(dbMessages)
-
-	err := beefyDB.Initialize()
-	if err != nil {
-		return nil, err
-	}
-
 	relaychainConn := relaychain.NewConnection(config.Source.Polkadot.Endpoint)
-	ethereumConn := ethereum.NewConnection(config.Sink.Ethereum.Endpoint, ethereumKeypair)
+	ethereumConn := ethereum.NewConnection(&config.Sink.Ethereum, ethereumKeypair)
 
-	beefyMessages := make(chan store.BeefyRelayInfo)
-	ethHeaders := make(chan chain.Header)
-
-	beefyEthereumListener := NewBeefyEthereumListener(&config.Sink,
-		ethereumConn, beefyDB, beefyMessages, dbMessages, ethHeaders)
-
-	beefyEthereumWriter := NewBeefyEthereumWriter(&config.Sink, ethereumConn,
-		beefyDB, dbMessages, beefyMessages)
-
-	beefyRelaychainListener := NewBeefyRelaychainListener(
-		config,
+	polkadotListener := NewPolkadotListener(
+		&config.Source,
 		relaychainConn,
-		beefyMessages,
 	)
 
+	ethereumWriter := NewEthereumWriter(&config.Sink, ethereumConn)
+
+	log.Info("Beefy relay created")
+
 	return &Relay{
-		config:                  config,
-		relaychainConn:          relaychainConn,
-		beefyEthereumListener:   beefyEthereumListener,
-		ethereumConn:            ethereumConn,
-		beefyEthereumWriter:     beefyEthereumWriter,
-		beefyRelaychainListener: beefyRelaychainListener,
-		beefyDB:                 beefyDB,
-		beefyMessages:           beefyMessages,
-		ethHeaders:              ethHeaders,
+		config:           config,
+		relaychainConn:   relaychainConn,
+		ethereumConn:     ethereumConn,
+		polkadotListener: polkadotListener,
+		ethereumWriter:   ethereumWriter,
 	}, nil
 }
 
 func (relay *Relay) Start(ctx context.Context, eg *errgroup.Group) error {
-	err := relay.beefyDB.Start(ctx, eg)
+	err := relay.relaychainConn.ConnectWithHeartBeat(ctx, 30*time.Second)
 	if err != nil {
-		log.WithError(err).Error("Failed to start database")
-		return err
-	}
-
-	err = relay.relaychainConn.Connect(ctx)
-	if err != nil {
-		return err
+		return fmt.Errorf("create relaychain connection: %w", err)
 	}
 
 	err = relay.ethereumConn.Connect(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("create ethereum connection: %w", err)
+	}
+	err = relay.ethereumWriter.initialize(ctx)
+	if err != nil {
+		return fmt.Errorf("initialize ethereum writer: %w", err)
 	}
 
-	latestBeefyBlock, err := relay.beefyEthereumListener.Start(ctx, eg)
+	initialState, err := relay.ethereumWriter.queryBeefyClientState(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch BeefyClient current state: %w", err)
+	}
+	log.WithFields(log.Fields{
+		"beefyBlock":     initialState.LatestBeefyBlock,
+		"validatorSetID": initialState.CurrentValidatorSetID,
+	}).Info("Retrieved current BeefyClient state")
+
+	requests, err := relay.polkadotListener.Start(ctx, eg, initialState.LatestBeefyBlock)
+	if err != nil {
+		return fmt.Errorf("initialize polkadot listener: %w", err)
 	}
 
-	err = relay.beefyRelaychainListener.Start(ctx, eg, latestBeefyBlock)
+	err = relay.ethereumWriter.Start(ctx, eg, requests)
 	if err != nil {
-		return err
-	}
-
-	err = relay.beefyEthereumWriter.Start(ctx, eg)
-	if err != nil {
-		return err
+		return fmt.Errorf("start ethereum writer: %w", err)
 	}
 
 	return nil

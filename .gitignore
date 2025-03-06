@@ -6,3 +6,38 @@ workspace.code-workspace
 
 # Node modules
 node_modules/
+
+#Intellij project file
+.idea
+
+# asdf plugin versions
+.tool-versions
+
+/relaychain/
+.vscode
+
+/.rustup/
+.cargo/
+!.cargo/config.toml
+
+.DS_Store
+
+.direnv
+.envrc
+parachain/build_rs_cov.profraw
+compiler_config.json
+contracts/beefy-state.json
+
+# beacon states generate by relayer
+states/
+
+go/
+gocache/
+go.work*
+control/target/
+web/packages/operations/.env.polkadot
+web/packages/operations/.env.rococo
+lodestar
+db.sqlite*
+.pnpm-store
+deploy

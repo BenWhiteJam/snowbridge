@@ -5,11 +5,11 @@ package parachain
 
 import (
 	"context"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
 	gsrpc "github.com/snowfork/go-substrate-rpc-client/v4"
-	"github.com/snowfork/go-substrate-rpc-client/v4/rpc/offchain"
 	"github.com/snowfork/go-substrate-rpc-client/v4/signature"
 	"github.com/snowfork/go-substrate-rpc-client/v4/types"
 
@@ -73,6 +73,33 @@ func (co *Connection) Connect(_ context.Context) error {
 	return nil
 }
 
+func (co *Connection) ConnectWithHeartBeat(ctx context.Context, heartBeat time.Duration) error {
+	err := co.Connect(ctx)
+	if err != nil {
+		return err
+	}
+
+	ticker := time.NewTicker(heartBeat)
+
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_, err := co.API().RPC.System.Version()
+				if err != nil {
+					log.WithField("endpoint", co.endpoint).Error("Connection heartbeat failed")
+					return
+				}
+			}
+		}
+	}()
+
+	return nil
+}
+
 func (co *Connection) Close() {
 	// TODO: Fix design issue in GSRPC preventing on-demand closing of connections
 }
@@ -102,64 +129,4 @@ func (co *Connection) GetLatestBlockNumber() (*types.BlockNumber, error) {
 	}
 
 	return &latestBlock.Block.Header.Number, nil
-}
-
-func (co *Connection) GetDataForDigestItem(digestItem *AuxiliaryDigestItem) (types.StorageDataRaw, error) {
-	storageKey, err := MakeStorageKey(digestItem.AsCommitment.ChannelID, digestItem.AsCommitment.Hash)
-	if err != nil {
-		return nil, err
-	}
-
-	data, err := co.API().RPC.Offchain.LocalStorageGet(offchain.Persistent, storageKey)
-	if err != nil {
-		log.WithError(err).Error("Failed to read commitment from offchain storage")
-		return nil, err
-	}
-
-	if data != nil {
-		log.WithFields(logrus.Fields{
-			"commitmentSizeBytes": len(*data),
-		}).Debug("Retrieved commitment from offchain storage")
-	} else {
-		log.WithError(err).Error("Commitment not found in offchain storage")
-		return nil, err
-	}
-
-	return *data, nil
-}
-
-func (co *Connection) ReadBasicOutboundMessages(digestItem AuxiliaryDigestItem) (
-	BasicOutboundChannelMessages, error) {
-	data, err := co.GetDataForDigestItem(&digestItem)
-	if err != nil {
-		return nil, err
-	}
-
-	var messages []BasicOutboundChannelMessage
-
-	err = types.DecodeFromBytes(data, &messages)
-	if err != nil {
-		log.WithError(err).Error("Failed to decode commitment messages")
-		return nil, err
-	}
-
-	return messages, nil
-}
-
-func (co *Connection) ReadIncentivizedOutboundMessages(digestItem AuxiliaryDigestItem) (
-	IncentivizedOutboundChannelMessages, error) {
-	data, err := co.GetDataForDigestItem(&digestItem)
-	if err != nil {
-		return nil, err
-	}
-
-	var messages []IncentivizedOutboundChannelMessage
-
-	err = types.DecodeFromBytes(data, &messages)
-	if err != nil {
-		log.WithError(err).Error("Failed to decode commitment messages")
-		return nil, err
-	}
-
-	return messages, nil
 }

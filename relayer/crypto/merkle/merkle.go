@@ -17,8 +17,8 @@ import (
 // whether the node was a left child or right child. This allows
 // hash concatenation can be performed correctly.
 const (
-	POSITION_LEFT  = "left"
-	POSITION_RIGHT = "right"
+	PositionLeft  = "left"
+	PositionRight = "right"
 )
 
 func depth(n int) int {
@@ -74,13 +74,14 @@ func (n *Node) UnmarshalJSON(data []byte) error {
 
 // Tree is the merkle tree structure. It is implemented
 // as an array of arrays of arrays of bytes:
-//   [
-//     [ root digest ],
-//     [ digest, digest ],
-//     [ digest, digest, digest, digest],
-//     ...
-//     [ leaf, leaf, leaf, leaf, ... ]
-//   ]
+//
+//	[
+//	  [ root digest ],
+//	  [ digest, digest ],
+//	  [ digest, digest, digest, digest],
+//	  ...
+//	  [ leaf, leaf, leaf, leaf, ... ]
+//	]
 type Tree struct {
 	levels [][][]byte
 	h      Hasher
@@ -140,7 +141,7 @@ func (t *Tree) MerklePath(preLeaf []byte) []*Node {
 		remainder := levelLen % 2
 		nextIndex := index / 2
 
-		// if index is the the last item in an odd length level promote
+		// if index is the last item in an odd length level promote
 		if index == levelLen-1 && remainder != 0 {
 			index = nextIndex
 			continue
@@ -148,9 +149,9 @@ func (t *Tree) MerklePath(preLeaf []byte) []*Node {
 
 		// if i is odd we want to get the left sibling
 		if index%2 != 0 {
-			path = append(path, &Node{Hash: level[index-1], Position: POSITION_LEFT})
+			path = append(path, &Node{Hash: level[index-1], Position: PositionLeft})
 		} else {
-			path = append(path, &Node{Hash: level[index+1], Position: POSITION_RIGHT})
+			path = append(path, &Node{Hash: level[index+1], Position: PositionRight})
 		}
 
 		index = nextIndex
@@ -219,7 +220,7 @@ func Prove(preLeaf, root []byte, path []*Node, h Hasher) bool {
 	hash := leaf
 
 	for _, node := range path {
-		if node.Position == POSITION_LEFT {
+		if node.Position == PositionLeft {
 			hash = append(node.Hash, hash...)
 		} else {
 			hash = append(hash, node.Hash...)
